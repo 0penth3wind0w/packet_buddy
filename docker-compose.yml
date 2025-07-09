@@ -1,5 +1,3 @@
-version: '3.6'
-
 services:
   packet_buddy:
     image: 0penth3wind0w/packet_buddy:packet_buddy
@@ -7,13 +5,13 @@ services:
     restart: always
     build: 
       context: ./
-      dockerfile: ./docker/Dockerfile
+      dockerfile: Dockerfile
     ports:
       - "8505:8505"
     extra_hosts:
       - host.docker.internal:host-gateway
     volumes:
-      - ./packet_buddy/config.toml:/root/.streamlit/config.toml
+      - ./config.toml:/root/.streamlit/config.toml
     # deploy:
     #   resources:
     #     reservations:

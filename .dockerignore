@@ -1,0 +1,6 @@
+**/venv/
+**/__pycache__
+**/chroma
+**/packet_data
+*.pcap
+*.json

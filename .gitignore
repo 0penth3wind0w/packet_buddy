@@ -1,7 +1,6 @@
 .DS_Store
-venv
 packet_buddy/chroma
 packet_buddy/packet_data
-
+__pycache__
 *.pcap
 *.pyc
