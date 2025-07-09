@@ -1,30 +1,38 @@
 # packet_buddy
 pcap analysis provided by Ollama and the open source model of your choice!
 
-## Getting started
+## How to use
+You can either run the application with virtualenv or docker
 
-Clone the repo
+### Run with virtualenv
 
-## Bring up the server
-docker-compose up 
+#### Set Up
+- Install `tshark`
+- Create virtual environment `virtualenv venv`
+- Install packages `pip install -r packet_buddy/requirements.txt`
+- Get desired model with `ollama pull`
 
-## Visit Ollama and download your model(s)
-http://localhost:3002
+#### Run
+- Activate virtualenv `virtualenv venv`
+- Start Ollama on host
+- `cd packet_buddy`
+- `streamlit run packet_buddy.py`
+- Connect to `http://localhost:8505`
 
-Gear / settings button
+### Runs with Docker
 
-Models
+#### Set Up
+- Get desired model with `ollama pull`
 
-Download phi, llama2, gemma, etc
-
-## Start Packet Buddy
-http://localhost:8505
+#### Run
+- Start Ollama on host
+- `docker-compose up`
+- Connect to `http://localhost:8505`
 
 ### Usage
-This has been tested with a variety of small .pcap files and works best with smaller data sets. If possible use wireshark filters or other methods to limit the size of the .pcap and number of packets you wish to 'chat' with. For larget .pcaps I would recommend Packet RAPTOR instead.
+1. Upload your PCAP 
+2. Pick Model
+3. Ask questions about the PCAP
 
-Upload your PCAP 
-Pick Your Model
-Ask questions about the PCAP
-
-The tool will download the Instructor-XL model dynamically, be patient, the first time you launch it, in order to provide free open source embeddings
+## Attribution
+Inspired and modified from [automateyournetwork/packet_buddy](https://github.com/automateyournetwork/packet_buddy)

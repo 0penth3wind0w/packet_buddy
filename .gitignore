@@ -1,1 +1,7 @@
-data
+.DS_Store
+venv
+packet_buddy/chroma
+packet_buddy/packet_data
+
+*.pcap
+*.pyc

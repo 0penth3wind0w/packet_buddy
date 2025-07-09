@@ -1,118 +1,144 @@
 import os
-import json
 import requests
 import subprocess
 import streamlit as st
-from langchain_community.llms import Ollama
-from langchain_community.vectorstores import Chroma
-from langchain.memory import ConversationBufferMemory
-from langchain.chains import ConversationalRetrievalChain
+from configparser import ConfigParser
+# https://python.langchain.com/api_reference/langchain/chains/langchain.chains.conversational_retrieval.base.ConversationalRetrievalChain.html
+from langchain.chains import (
+    create_history_aware_retriever,
+    create_retrieval_chain,
+)
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_chroma import Chroma
 from langchain_community.document_loaders import JSONLoader
-from langchain_experimental.text_splitter import SemanticChunker
-from langchain_community.embeddings import HuggingFaceInstructEmbeddings 
+from langchain_ollama import OllamaLLM, OllamaEmbeddings
+from langchain_core.messages import HumanMessage, AIMessage
 
-# Message classes
-class Message:
-    def __init__(self, content):
-        self.content = content
+config = ConfigParser()
+config.read('config.ini')
 
-class HumanMessage(Message):
-    """Represents a message from the user."""
-    pass
+OLLAMA_BASE_URL = config['ollama']['Base_URL']
+EMBEDDING_DEVICE = config['embedding']['device']
+EMBEDDING_MODEL = config['embedding']['model']
+os.environ["OLLAMA_HOST"] = OLLAMA_BASE_URL
 
-class AIMessage(Message):
-    """Represents a message from the AI."""
-    pass
+# Prompts
+contextualize_q_system_prompt = (
+    "Given a chat history and the latest user question "
+    "which might reference context in the chat history, "
+    "formulate a standalone question which can be understood "
+    "without the chat history. Do NOT answer the question, just "
+    "reformulate it if needed and otherwise return it as is."
+)
 
-@st.cache_resource
-def load_model():
-    with st.spinner("Downloading Instructor XL Embeddings Model locally....please be patient"):
-        embedding_model=HuggingFaceInstructEmbeddings(model_name="hkunlp/instructor-large", model_kwargs={"device": "cuda"})
-    return embedding_model
+system_prompt = """
+    You are a helper assistant specialized in analysing packet captures used for troubleshooting & technical analysis. 
+    Use the following packet capture information to answer the user's question:
 
-# Function to generate priming text based on pcap data
-def returnSystemText(pcap_data: str) -> str:
-    PACKET_WHISPERER = f"""
-        You are a helper assistant specialized in analysing packet captures used for troubleshooting & technical analysis. Use the information present in packet_capture_info to answer all the questions truthfully. If the user asks about a specific application layer protocol, use the following hints to inspect the packet_capture_info to answer the question. Format your response in markdown text with line breaks & emojis.
+    {context}
 
-        hints :
-        http means tcp.port = 80
-        https means tcp.port = 443
-        snmp means udp.port = 161 or udp.port = 162
-        ntp means udp.port = 123
-        ftp means tcp.port = 21
-        ssh means tcp.port = 22
-        BGP means tcp.port = 179
-        OSPF uses IP protocol 89 (not TCP/UDP port-based, but rather directly on top of IP)
-        MPLS doesn't use a TCP/UDP port as it's a data-carrying mechanism for high-performance telecommunications networks
-        DNS means udp.port = 53 (also tcp.port = 53 for larger queries or zone transfers)s
-        DHCP uses udp.port = 67 for the server and udp.port = 68 for the client
-        SMTP means tcp.port = 25 (for email sending)
-        POP3 means tcp.port = 110 (for email retrieval)
-        IMAP means tcp.port = 143 (for email retrieval, with more features than POP3)
-        HTTPS means tcp.port = 443 (secure web browsing)
-        LDAP means tcp.port = 389 (for accessing and maintaining distributed directory information services over an IP network)
-        LDAPS means tcp.port = 636 (secure version of LDAP)
-        SIP means tcp.port = 5060 or udp.port = 5060 (for initiating interactive user sessions involving multimedia elements such as video, voice, chat, gaming, etc.)
-        RTP (Real-time Transport Protocol) doesn't have a fixed port but is commonly used in conjunction with SIP for the actual data transfer of audio and video streams.
-    """
-    # Might be redundant - pcap data - alraedy doing rag - less tokens
-    return PACKET_WHISPERER
+    Based on the packet capture data above, provide a detailed analysis. If the user asks about a specific application layer protocol, use the following hints to inspect the packet_capture_info:
+
+    hints :
+    - http means tcp.port = 80
+    - https means tcp.port = 443
+    - snmp means udp.port = 161 or udp.port = 162
+    - ntp means udp.port = 123
+    - ftp means tcp.port = 21
+    - ssh means tcp.port = 22
+    - BGP means tcp.port = 179
+    - OSPF uses IP protocol 89 (not TCP/UDP port-based, but rather directly on top of IP)
+    - DNS means udp.port = 53 (also tcp.port = 53)
+    - DHCP uses udp.port = 67 (server) and udp.port = 68 (client)
+    - SMTP means tcp.port = 25 (for email sending)
+    - POP3 means tcp.port = 110 (for email retrieval)
+    - IMAP means tcp.port = 143 (for email retrieval, with more features than POP3)
+    - LDAP means tcp.port = 389 (for accessing and maintaining distributed directory information services over an IP network)
+    - LDAPS means tcp.port = 636 (secure version of LDAP)
+    - SIP means tcp.port = 5060 or udp.port = 5060 (for initiating interactive user sessions involving multimedia elements such as video, voice, chat, gaming, etc.)
+    - RTP (Real-time Transport Protocol) doesn't have a fixed port but is commonly used in conjunction with SIP for the actual data transfer of audio and video streams.
+
+    Format your response in markdown with line breaks and emojis. Always reference specific packet data when possible.
+"""
 
 # Define a class for chatting with pcap data
 class ChatWithPCAP:
     def __init__(self, json_path):
-        self.embedding_model = load_model()
+        self.embedding_model = OllamaEmbeddings(model=EMBEDDING_MODEL)
         self.json_path = json_path
-        self.conversation_history = []
         self.load_json()
-        self.split_into_chunks()
         self.store_in_chroma()
-        self.setup_conversation_memory()
+        self.chat_history = []
         self.setup_conversation_retrieval_chain()
-        self.priming_text = self.generate_priming_text()
 
     def load_json(self):
-        self.loader = JSONLoader(
-            file_path=self.json_path,
-            jq_schema=".[] | ._source.layers",
-            text_content=False
-        )
-        self.pages = self.loader.load_and_split()
-
-    def split_into_chunks(self):
-        with st.spinner("Splitting into chunks..."):         
-            self.text_splitter = SemanticChunker(self.embedding_model)
-            self.docs = self.text_splitter.split_documents(self.pages)
+        self.loader = JSONLoader(file_path=self.json_path, jq_schema=".[] | ._source.layers", text_content=False)
+        self.documents = self.loader.load()
 
     def store_in_chroma(self):
+        persist_directory = "./chroma"
+        # with st.spinner("Loading existing Chroma database..."):
+        #     self.vectordb = Chroma(persist_directory=persist_directory, embedding_function=self.embedding_model)
+        # # Check if database is empty or needs to be recreated
+        # if self.vectordb._collection.count() == 0:
+        #     with st.spinner("Database empty, storing documents in Chroma..."):
+        #         self.vectordb.add_documents(self.documents)
         with st.spinner("Storing in Chroma..."):
-            # Now, pass this wrapper to Chroma.from_documents
-            self.vectordb = Chroma.from_documents(self.docs, self.embedding_model)
-            self.vectordb.persist()
-
-    def setup_conversation_memory(self):
-        self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+            self.vectordb = Chroma.from_documents(
+                documents=self.documents,
+                embedding=self.embedding_model,
+                persist_directory=persist_directory
+            )
 
     def setup_conversation_retrieval_chain(self):
-        self.llm = Ollama(model=st.session_state['selected_model'], base_url="http://ollama:11434")
-        self.qa = ConversationalRetrievalChain.from_llm(self.llm, self.vectordb.as_retriever(search_kwargs={"k": 10}), memory=self.memory)
-
-    def generate_priming_text(self):
-        pcap_summary = " ".join([str(page) for page in self.pages[:5]])
-        return returnSystemText(pcap_summary)
+        self.llm = OllamaLLM(model=st.session_state['selected_model'], base_url=OLLAMA_BASE_URL)
+        # Ensure the vector database is used as a retriever
+        retriever = self.vectordb.as_retriever(
+            search_kwargs={"k": 15}
+        )
+        contextualize_q_prompt = ChatPromptTemplate.from_messages([
+            ("system", contextualize_q_system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ])
+        history_aware_retriever = create_history_aware_retriever(
+            self.llm, retriever, contextualize_q_prompt
+        )
+        qa_prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ])
+        question_answer_chain = create_stuff_documents_chain(self.llm, qa_prompt)
+        self.rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
     def chat(self, question):
-        # Combine the original question with the priming text
-        primed_question = self.priming_text + "\n\n" + question
+        try:
+            response = self.rag_chain.invoke({
+                "input": question,
+                "chat_history": self.chat_history
+            })
 
-        response = self.qa.invoke(primed_question)
-        
-        if response:
-            st.write("Query:", primed_question)
-            st.write("Response:", response['answer'])
+            if response and "answer" in response:
+                # Update chat history
+                self.chat_history.extend([
+                    HumanMessage(content=question),
+                    AIMessage(content=response["answer"])
+                ])
+                
+                # Implement manual window management to limit memory usage
+                max_history_length = 10  # Keep last 5 exchanges (10 messages)
+                if len(self.chat_history) > max_history_length:
+                    self.chat_history = self.chat_history[-max_history_length:]
 
-            return {'answer': response['answer']}
+                return {'answer': response['answer']}
+            else:
+                return {'answer': "I couldn't generate a response based on the packet data. Please try rephrasing your question."}
+
+        except Exception as e:
+            st.error(f"Error during chat: {str(e)}")
+            return {'answer': "An error occurred while processing your question."}
    
 # Function to convert pcap to JSON
 def pcap_to_json(pcap_path, json_path):
@@ -121,7 +147,7 @@ def pcap_to_json(pcap_path, json_path):
 
 def get_ollama_models(base_url):
     try:       
-        response = requests.get(f"{base_url}api/tags")  # Corrected endpoint
+        response = requests.get(f"{base_url}/api/tags")  # Corrected endpoint
         response.raise_for_status()
         models_data = response.json()
         
@@ -137,9 +163,9 @@ def upload_and_convert_pcap():
     st.title('Packet Buddy - Chat with Packet Captures')
     uploaded_file = st.file_uploader("Choose a PCAP file", type="pcap")
     if uploaded_file:
-        if not os.path.exists('temp'):
-            os.makedirs('temp')
-        pcap_path = os.path.join("temp", uploaded_file.name)
+        if not os.path.exists('packet_data'):
+            os.makedirs('packet_data')
+        pcap_path = os.path.join("packet_data", uploaded_file.name)
         json_path = pcap_path + ".json"
         with open(pcap_path, "wb") as f:
             f.write(uploaded_file.getvalue())
@@ -147,17 +173,19 @@ def upload_and_convert_pcap():
         st.session_state['json_path'] = json_path
         st.success("PCAP file uploaded and converted to JSON.")
         # Fetch and display the models in a select box
-        models = get_ollama_models("http://ollama:11434/")  # Make sure to use the correct base URL
+        models = get_ollama_models(OLLAMA_BASE_URL)  # Make sure to use the correct base URL
         if models:
             selected_model = st.selectbox("Select Model", models)
             st.session_state['selected_model'] = selected_model
             
             if st.button("Proceed to Chat"):
-                st.session_state['page'] = 2        
+                st.session_state['page'] = 2
 
 # Streamlit UI for chat interface
 def chat_interface():
     st.title('Packet Buddy - Chat with Packet Captures')
+    # st.session_state['json_path'] = 'packet_data/tmp1.pcap.json'
+    # st.session_state['selected_model'] = 'gemma2:latest'
     json_path = st.session_state.get('json_path')
     if not json_path or not os.path.exists(json_path):
         st.error("PCAP file missing or not converted. Please go back and upload a PCAP file.")
@@ -165,21 +193,32 @@ def chat_interface():
 
     if 'chat_instance' not in st.session_state:
         st.session_state['chat_instance'] = ChatWithPCAP(json_path=json_path)
+    
+    if st.button("Clear Chat History"):
+        st.session_state['chat_instance'].chat_history = []
+        st.rerun()
 
     user_input = st.text_input("Ask a question about the PCAP data:")
     if user_input and st.button("Send"):
         with st.spinner('Thinking...'):
             response = st.session_state['chat_instance'].chat(user_input)
-            st.markdown("**Synthesized Answer:**")
+
+            # Display the response
             if isinstance(response, dict) and 'answer' in response:
+                st.markdown("**Answer:**")
                 st.markdown(response['answer'])
             else:
-                st.markdown("No specific answer found.")
+                st.error("Failed to get a response from the system.")
 
-            st.markdown("**Chat History:**")
-            for message in st.session_state['chat_instance'].conversation_history:
-                prefix = "*You:* " if isinstance(message, HumanMessage) else "*AI:* "
-                st.markdown(f"{prefix}{message.content}")
+     # Display chat history
+    if st.session_state['chat_instance'].chat_history:
+        st.markdown("**Chat History:**")
+        for _, message in enumerate(st.session_state['chat_instance'].chat_history):
+            if isinstance(message, HumanMessage):
+                st.markdown(f"**You:** {message.content}")
+            elif isinstance(message, AIMessage):
+                st.markdown(f"**Assistant:** {message.content}")
+            st.markdown("---")
 
 if __name__ == "__main__":
     if 'page' not in st.session_state:

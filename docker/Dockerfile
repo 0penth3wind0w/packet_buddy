@@ -2,46 +2,21 @@ FROM ubuntu:latest
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN echo "==> Upgrading apk and installing system utilities ...." \
- && apt -y update \
- && apt-get install -y wget \
- && apt-get -y install sudo
+# Upgrade apt and install packages
+RUN apt -y update \
+  && apt install -y wget \
+  && apt install -y tshark \
+  && apt install -y python3-full \
+  && apt install -y python3-pip \
+  && apt install -y python3-venv
 
-RUN echo "==> Installing Python3 and pip ...." \  
- && apt-get install python3 -y \
- && apt install python3-pip -y
+# Create and activate Python venv
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-RUN echo "==> Install dos2unix..." \
-  && sudo apt-get install dos2unix -y 
-
-RUN echo "==> Install langchain requirements.." \
-  && pip install --break-system-packages -U --quiet langchain_experimental langchain langchain-community \
-  && pip install --break-system-packages chromadb \
-  && pip install --break-system-packages tiktoken
-
-RUN echo "==> Install jq.." \
-  && pip install --break-system-packages jq
-
-RUN echo "==> Install streamlit.." \
-  && pip install --break-system-packages streamlit --upgrade
-
-# Install tshark
-RUN apt-get update && apt-get install -y tshark
-
-RUN echo "==> Adding pyshark ..." \
-  && pip install --break-system-packages pyshark
-
-RUN echo "==> Adding requests ..." \
-  && pip install --break-system-packages requests
-
-RUN echo "==> Adding InstructorEmbedding ..." \
-  && pip install --break-system-packages -U sentence-transformers==2.2.2 \
-  && pip install --break-system-packages InstructorEmbedding
-
+# Install Python dependencies
 COPY /packet_buddy /packet_buddy/
-COPY /scripts /scripts/
+RUN pip install -r /packet_buddy/requirements.txt
 
-RUN echo "==> Convert script..." \
-  && dos2unix /scripts/startup.sh
-
-CMD ["/bin/bash", "/scripts/startup.sh"]
+WORKDIR /packet_buddy
+CMD ["streamlit", "run", "packet_buddy.py"]
