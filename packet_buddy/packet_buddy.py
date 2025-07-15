@@ -1,5 +1,4 @@
 import os
-import subprocess
 import streamlit as st
 from configparser import ConfigParser
 # https://python.langchain.com/api_reference/langchain/chains/langchain.chains.conversational_retrieval.base.ConversationalRetrievalChain.html
@@ -7,12 +6,18 @@ from langchain.chains import (
     create_history_aware_retriever,
     create_retrieval_chain,
 )
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_chroma import Chroma
-from langchain_community.document_loaders import JSONLoader
-from langchain_ollama import OllamaLLM, OllamaEmbeddings
+from langchain_community.document_loaders import DirectoryLoader, JSONLoader, TextLoader, UnstructuredMarkdownLoader
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_ollama import OllamaLLM, OllamaEmbeddings
+
+from data_processing import (
+    pcap_to_json,
+    split_by_packet,
+    split_by_stream
+)
 
 config = ConfigParser()
 config.read('config.ini')
@@ -64,16 +69,44 @@ system_prompt = """
 
 # Define a class for chatting with pcap data
 class ChatWithPCAP:
-    def __init__(self, json_path):
+    def __init__(self, pcap_path):
         self.embedding_model = OllamaEmbeddings(model=EMBEDDING_MODEL)
-        self.json_path = json_path
-        self.load_json()
-        self.store_in_chroma()
+        # data location
+        self.pcap_name = os.path.basename(pcap_path)
+        self.data_location = os.path.dirname(pcap_path)
+        self.load_data()
+        self.vectordb = None
+        self.llm = None
+        self.rag_chain = None
         self.chat_history = []
+        self.store_in_chroma()
         self.setup_conversation_retrieval_chain()
 
-    def load_json(self):
-        self.loader = JSONLoader(file_path=self.json_path, jq_schema=".[] | ._source.layers", text_content=False)
+    def load_data(self):
+        split_by_packet(f"{self.data_location}/{self.pcap_name}.json", "json")
+        split_by_stream(f"{self.data_location}/{self.pcap_name}.json", "json")
+        self.loader = DirectoryLoader(
+            path=f"{self.data_location}/json",
+            glob="*.json",
+            loader_cls=lambda file_path: JSONLoader(
+                file_path=file_path,
+                jq_schema='.',
+                text_content=False
+            )
+        )
+        # self.loader = DirectoryLoader(
+        #     path=f"{self.data_location}/markdown",
+        #     glob="*.md",
+        #     loader_cls=UnstructuredMarkdownLoader
+        # )
+        # self.loader = DirectoryLoader(
+        #     path=f"{self.data_location}/txt",
+        #     glob="*.txt",
+        #     loader_cls=lambda file_path: TextLoader(
+        #         file_path=file_path,
+        #         autodetect_encoding=True
+        #     )
+        # )
         self.documents = self.loader.load()
 
     def store_in_chroma(self):
@@ -133,10 +166,7 @@ class ChatWithPCAP:
             st.error(f"Error during chat: {str(e)}")
             return {'answer': "An error occurred while processing your question."}
 
-# Function to convert pcap to JSON
-def pcap_to_json(pcap_path, json_path):
-    command = f'tshark -nlr {pcap_path} -T json > {json_path}'
-    subprocess.run(command, shell=True)
+
 
 # Streamlit UI for uploading and converting pcap file
 def upload_and_convert_pcap():
@@ -147,13 +177,12 @@ def upload_and_convert_pcap():
         if not os.path.exists('packet_data'):
             os.makedirs('packet_data')
         pcap_path = os.path.join("packet_data", uploaded_file.name)
-        json_path = pcap_path + ".json"
 
         with open(pcap_path, "wb") as f:
             f.write(uploaded_file.getvalue())
 
-        pcap_to_json(pcap_path, json_path)
-        st.session_state['json_path'] = json_path
+        pcap_to_json(pcap_path, f"{pcap_path}.json")
+        st.session_state['pcap_path'] = pcap_path
         st.success("PCAP file uploaded and converted to JSON.")
         if st.button("Proceed to Chat"):
             st.session_state['page'] = 2
@@ -163,8 +192,8 @@ def upload_and_convert_pcap():
 def chat_interface():
     st.title('Packet Buddy - Chat with pcap')
     
-    json_path = st.session_state.get('json_path')
-    if not json_path or not os.path.exists(json_path):
+    pcap_path = st.session_state.get('pcap_path')
+    if not pcap_path or not os.path.exists(f"{pcap_path}.json"):
         st.error("PCAP file missing or not converted. Please go back and upload a PCAP file.")
         return
 
@@ -175,7 +204,7 @@ def chat_interface():
         st.button("Upload New PCAP", on_click=lambda: setattr(st.session_state, 'page', 1))
 
     if 'chat_instance' not in st.session_state:
-        st.session_state['chat_instance'] = ChatWithPCAP(json_path=json_path)
+        st.session_state['chat_instance'] = ChatWithPCAP(pcap_path=pcap_path)
     
     for message in st.session_state['chat_instance'].chat_history:
         if isinstance(message, HumanMessage):
