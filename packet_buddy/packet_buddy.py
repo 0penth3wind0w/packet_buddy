@@ -1,3 +1,4 @@
+import logging
 import os
 import streamlit as st
 from configparser import ConfigParser
@@ -19,6 +20,12 @@ from data_processing import (
     split_by_stream
 )
 
+logging.basicConfig(filename='packet_buddy.log', encoding='utf-8',
+                    format='[%(asctime)s][%(levelname)s] %(message)s', level=logging.DEBUG)
+
+logger = logging.getLogger("packet_buddy")
+logger.setLevel(logging.DEBUG)
+
 config = ConfigParser()
 config.read('config.ini')
 
@@ -38,34 +45,33 @@ contextualize_q_system_prompt = (
 )
 
 system_prompt = """
-    You are a helper assistant specialized in analysing packet captures used for troubleshooting & technical analysis. 
-    Use the following packet capture information to answer the user's question:
+    You are specialized in analyzing packets related data.
+    Use the following information to answer user's question:
 
     {context}
 
-    Based on the packet capture data above, provide a detailed analysis. If the user asks about a specific application layer protocol, use the following hints to inspect the packet_capture_info:
+    The following info are available the context contains information about network packets of a stream:
+    - stream_number: the number of the TCP stream
+    - frames: a list of frames in the stream, each containing:
+        - frame.number: the number of the frame
+        - frame.time_utc: the timestamp when the frame was captured
+        - ip.version: the IP version used in the packet
+        - ip.src: source IP address
+        - ip.dst: destination IP address
+        - tcp.srcport: source port number
+        - tcp.dstport: destination port number
+        - tcp.payload: TCP payload data if available
+        - tcp.segment_data: TCP segment data if available
+        - tcp_analysis_flags: any TCP analysis flags present
 
-    hints :
-    - http means tcp.port = 80
-    - https means tcp.port = 443
-    - snmp means udp.port = 161 or udp.port = 162
-    - ntp means udp.port = 123
-    - ftp means tcp.port = 21
-    - ssh means tcp.port = 22
-    - BGP means tcp.port = 179
-    - OSPF uses IP protocol 89 (not TCP/UDP port-based, but rather directly on top of IP)
-    - DNS means udp.port = 53 (also tcp.port = 53)
-    - DHCP uses udp.port = 67 (server) and udp.port = 68 (client)
-    - SMTP means tcp.port = 25 (for email sending)
-    - POP3 means tcp.port = 110 (for email retrieval)
-    - IMAP means tcp.port = 143 (for email retrieval, with more features than POP3)
-    - LDAP means tcp.port = 389 (for accessing and maintaining distributed directory information services over an IP network)
-    - LDAPS means tcp.port = 636 (secure version of LDAP)
-    - SIP means tcp.port = 5060 or udp.port = 5060 (for initiating interactive user sessions involving multimedia elements such as video, voice, chat, gaming, etc.)
-    - RTP (Real-time Transport Protocol) doesn't have a fixed port but is commonly used in conjunction with SIP for the actual data transfer of audio and video streams.
+    Search within the context to provide the answer.
+    If the anser cannot obtained from the context, respond with "I cannot answer that based on the packet data."
+    Always provide the reasoning behind your answer, no matter you're able to answer the question or not.
+    And briefly describe what you can find in the context.
 
-    Format your response in markdown with line breaks and emojis. Always reference specific packet data when possible.
+    Format your response in markdown with line breaks.
 """
+
 
 # Define a class for chatting with pcap data
 class ChatWithPCAP:
@@ -128,7 +134,8 @@ class ChatWithPCAP:
         self.llm = OllamaLLM(model=LLM_MODEL, base_url=OLLAMA_BASE_URL)
         # Ensure the vector database is used as a retriever
         retriever = self.vectordb.as_retriever(
-            search_kwargs={"k": 15} # Retrieve top k relevant documents, larger k may lead to better context but slower response
+            # Retrieve top k relevant documents, larger k may lead to better context but slower response
+            search_kwargs={"k": 15}
         )
         contextualize_q_prompt = ChatPromptTemplate.from_messages([
             ("system", contextualize_q_system_prompt),
@@ -143,15 +150,19 @@ class ChatWithPCAP:
             MessagesPlaceholder("chat_history"),
             ("human", "{input}"),
         ])
-        question_answer_chain = create_stuff_documents_chain(self.llm, qa_prompt)
-        self.rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
+        question_answer_chain = create_stuff_documents_chain(
+            self.llm, qa_prompt)
+        self.rag_chain = create_retrieval_chain(
+            history_aware_retriever, question_answer_chain)
 
     def chat(self, question):
         try:
             response = self.rag_chain.invoke({
                 "input": question,
-                "chat_history": self.chat_history[-10:] # Keep last 5 exchanges (10 messages)
+                # Keep last 5 exchanges (10 messages)
+                "chat_history": self.chat_history[-10:]
             })
+            logger.debug(response)
 
             if response and "answer" in response:
                 # Update chat history
@@ -165,7 +176,6 @@ class ChatWithPCAP:
         except Exception as e:
             st.error(f"Error during chat: {str(e)}")
             return {'answer': "An error occurred while processing your question."}
-
 
 
 # Streamlit UI for uploading and converting pcap file
@@ -188,24 +198,27 @@ def upload_and_convert_pcap():
             st.session_state['page'] = 2
             st.rerun()
 
+
 # Streamlit UI for chat interface
 def chat_interface():
     st.title('Packet Buddy - Chat with pcap')
-    
+
     pcap_path = st.session_state.get('pcap_path')
     if not pcap_path or not os.path.exists(f"{pcap_path}.json"):
-        st.error("PCAP file missing or not converted. Please go back and upload a PCAP file.")
+        st.error(
+            "PCAP file missing or not converted. Please go back and upload a PCAP file.")
         return
 
     with st.sidebar:
         if st.button("Clear Chat History"):
             st.session_state['chat_instance'].chat_history = []
-            st.rerun()    
-        st.button("Upload New PCAP", on_click=lambda: setattr(st.session_state, 'page', 1))
+            st.rerun()
+        st.button("Upload New PCAP", on_click=lambda: setattr(
+            st.session_state, 'page', 1))
 
     if 'chat_instance' not in st.session_state:
         st.session_state['chat_instance'] = ChatWithPCAP(pcap_path=pcap_path)
-    
+
     for message in st.session_state['chat_instance'].chat_history:
         if isinstance(message, HumanMessage):
             with st.chat_message("user"):
@@ -213,11 +226,11 @@ def chat_interface():
         elif isinstance(message, AIMessage):
             with st.chat_message("assistant"):
                 st.markdown(f"{message.content}")
- 
+
     if user_input := st.chat_input("Ask a question about the PCAP data"):
         with st.chat_message("user"):
-                st.markdown(f"{user_input}")
-        
+            st.markdown(f"{user_input}")
+
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
             with st.spinner('Thinking...'):
@@ -227,6 +240,7 @@ def chat_interface():
                 else:
                     full_response = "I couldn't analyze the packet data properly. Please try again."
             message_placeholder.markdown(full_response)
+
 
 if __name__ == "__main__":
     if 'page' not in st.session_state:

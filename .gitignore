@@ -4,3 +4,4 @@ packet_buddy/packet_data
 __pycache__
 *.pcap
 *.pyc
+*.log

@@ -123,17 +123,17 @@ def split_by_stream(pcap_json: str, format: FORMAT):
             if stream_number not in grouped_packets:
                 grouped_packets[stream_number] = []
             grouped_packets[stream_number].append({
-                "frame_number": frame.get('frame.number'),
-                "time": frame.get('frame.time_utc'),
-                "ip_version": ip.get('ip.version'),
-                "src_ip": ip.get('ip.src'),
-                "dst_ip": ip.get('ip.dst'),
-                "src_port": tcp.get('tcp.srcport'),
-                "dst_port": tcp.get('tcp.dstport'),
-                "tcp_flags": tcp.get('tcp.flags'),
-                "tcp_analysis": tcp.get('tcp.analysis'),
-                "tcp_payload": tcp.get('tcp.payload'),
-                "tcp_segment_data": tcp.get('tcp.segment_data')
+                "frame.number": frame.get('frame.number'),
+                "frame.time_utc": frame.get('frame.time_utc'),
+                "ip.version": ip.get('ip.version'),
+                "ip.src": ip.get('ip.src'),
+                "ip.dst": ip.get('ip.dst'),
+                "tcp.srcport": tcp.get('tcp.srcport'),
+                "tcp.dstport": tcp.get('tcp.dstport'),
+                "tcp.flags": tcp.get('tcp.flags'),
+                "tcp.analysis": tcp.get('tcp.analysis'),
+                "tcp.payload": tcp.get('tcp.payload'),
+                "tcp.segment_data": tcp.get('tcp.segment_data')
             })
         
         # write to file
@@ -153,32 +153,32 @@ def split_by_stream(pcap_json: str, format: FORMAT):
                 elif format == "markdown":
                     outfile.write(f"# TCP Stream {stream_number}\n\n")
                     for frame in frames:
-                        outfile.write(f"## Frame {frame['frame_number']}\n")
-                        outfile.write(f"### Capture time\n{frame['time']}\n")
-                        outfile.write(f"### IP Version:\n{frame['ip_version']}\n")
-                        outfile.write(f"### Source `IP:port`:\n{frame['src_ip']}:{frame['src_port']}\n")
-                        outfile.write(f"### Destination `IP:port`:\n{frame['dst_ip']}:{frame['dst_port']}\n")
-                        if frame['tcp_payload']:
-                            outfile.write(f"### TCP Payload:\n{frame['tcp_payload']}\n")
-                        if frame['tcp_segment_data']:
-                            outfile.write(f"### TCP Segment Data:\n{frame['tcp_segment_data']}\n")
-                        if frame['tcp_analysis']:
-                            analysis_flags = frame['tcp_analysis'].get('tcp.analysis.flags', {})
+                        outfile.write(f"## Frame {frame['frame.number']}\n")
+                        outfile.write(f"### Capture time\n{frame['frame.time_utc']}\n")
+                        outfile.write(f"### IP Version:\n{frame['ip.version']}\n")
+                        outfile.write(f"### Source `IP:port`:\n{frame['ip.src']}:{frame['tcp.srcport']}\n")
+                        outfile.write(f"### Destination `IP:port`:\n{frame['ip.dst']}:{frame['tcp.dstport']}\n")
+                        if frame['tcp.payload']:
+                            outfile.write(f"### TCP Payload:\n{frame['tcp.payload']}\n")
+                        if frame['tcp.segment_data']:
+                            outfile.write(f"### TCP Segment Data:\n{frame['tcp.segment_data']}\n")
+                        if frame['tcp.analysis']:
+                            analysis_flags = frame['tcp.analysis'].get('tcp.analysis.flags', {})
                             if analysis_flags:
                                 outfile.write(f"> Note: {analysis_flags.get('_ws.expert.message', 'No analysis flags')}\n")
                         outfile.write("\n")
                 elif format == "txt":
                     outfile.write(f"TCP Stream {stream_number}\n\n")
                     for frame in frames:
-                        outfile.write(f"Frame {frame['frame_number']} was captured at {frame['time']}.\n")
-                        outfile.write(f"IP Version: {frame['ip_version']}\n")
-                        outfile.write(f"Source IP and port: {frame['src_ip']}:{frame['src_port']}, Destination IP and port: {frame['dst_ip']}:{frame['dst_port']}\n")
-                        if frame['tcp_payload']:
-                            outfile.write(f"The TCP payload is \"{frame['tcp_payload']}\".\n")
-                        if frame['tcp_segment_data']:
-                            outfile.write(f"The TCP segment data is \"{frame['tcp_segment_data']}\".\n")
-                        if frame['tcp_analysis']:
-                            analysis_flags = frame['tcp_analysis'].get('tcp.analysis.flags', {})
+                        outfile.write(f"Frame {frame['frame.number']} was captured at {frame['frame.time_utc']}.\n")
+                        outfile.write(f"IP Version: {frame['ip.version']}\n")
+                        outfile.write(f"Source IP and port: {frame['ip.src']}:{frame['tcp.srcport']}, Destination IP and port: {frame['ip.dst']}:{frame['tcp.dstport']}\n")
+                        if frame['tcp.payload']:
+                            outfile.write(f"The TCP payload is \"{frame['tcp.payload']}\".\n")
+                        if frame['tcp.segment_data']:
+                            outfile.write(f"The TCP segment data is \"{frame['tcp.segment_data']}\".\n")
+                        if frame['tcp.analysis']:
+                            analysis_flags = frame['tcp.analysis'].get('tcp.analysis.flags', {})
                             if analysis_flags:
                                 outfile.write(f"Note: {analysis_flags.get('_ws.expert.message', 'No analysis flags')}\n")
                         outfile.write("\n")
