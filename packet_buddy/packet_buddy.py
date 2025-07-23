@@ -51,7 +51,7 @@ system_prompt = """
     {context}
 
     The following info are available the context contains information about network packets of a stream:
-    - stream_number: the number of the TCP stream
+    - tcp.stream: the ID number of the TCP stream
     - frames: a list of frames in the stream, each containing:
         - frame.number: the number of the frame
         - frame.time_utc: the timestamp when the frame was captured

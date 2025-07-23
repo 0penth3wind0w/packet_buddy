@@ -146,7 +146,7 @@ def split_by_stream(pcap_json: str, format: FORMAT):
             with open(f"{dir}/{format}/stream_{stream_number}.{file_extension}", 'w') as outfile:
                 if format == "json":
                     data = {
-                        "stream_number": stream_number,
+                        "tcp.stream": stream_number,
                         "frames": frames
                     }
                     json.dump(data, outfile, indent=2)
