@@ -44,60 +44,55 @@ def split_by_packet(pcap_json: str, format: FORMAT):
             file_extension = f"{format}" if format != "markdown" else "md"
 
             with open(f"{dir}/{format}/frame_{frame['frame.number']}.{file_extension}", 'w') as outfile:
+                frame_info = {
+                    "tcp.stream": tcp.get('tcp.stream'),
+                    "tcp.stream.pnum": tcp.get('tcp.stream.pnum'),
+                    "frame.number": frame.get('frame.number'),
+                    "frame.len": frame.get('frame.len'),
+                    "frame.time_utc": frame.get('frame.time_utc'),
+                    "ip.src": ip.get('ip.src'),
+                    "ip.dst": ip.get('ip.dst'),
+                    "tcp.srcport": tcp.get('tcp.srcport'),
+                    "tcp.dstport": tcp.get('tcp.dstport'),
+                }
+                if tcp.get('tcp.payload'):
+                    frame_info["tcp.payload"] = tcp.get('tcp.payload')
+                if tcp.get('tcp.segment_data'):
+                    frame_info["tcp.segment_data"] = tcp.get('tcp.segment_data')
                 if format == "json":
-                    packet_info = {
-                        "frame": frame,
-                        "ip": ip,
-                        "tcp": tcp
-                    }
-                    json.dump(packet_info, outfile, indent=2)
+                    json.dump(frame_info, outfile, indent=2)
+                elif format == "markdown":
+                    description = (
+                        f"# Frame {frame['frame.number']}\n"
+                        "## Capture time\n"
+                        f"{frame['frame.time_utc']}\n"
+                        "## Stream Information\n"
+                        f"### Stream Number\n{tcp['tcp.stream']}\n"
+                        f"### Stream Packet Number\n{tcp['tcp.stream.pnum']}\n"
+                        "## Source\n"
+                        f"### IP\n{ip['ip.src']}\n"
+                        f"### Port\n{tcp['tcp.srcport']}\n"
+                        "## Destination\n"
+                        f"### IP\n{ip['ip.dst']}\n"
+                        f"### Port\n{tcp['tcp.dstport']}\n"
+                        f"{"## TCP Information\n" if tcp.get('tcp.payload') or tcp.get('tcp.segment_data') else ""}"
+                        f"### Payload\n{tcp.get('tcp.payload')}\n" if tcp.get('tcp.payload') else ""
+                        f"### Segment Data\n{tcp.get('tcp.segment_data')}\n" if tcp.get('tcp.segment_data') else ""
+                        "\n"
+                    )
+                    outfile.write(description)
+                elif format == "txt":
+                    description = (
+                        f"Frame {frame['frame.number']} was captured at {frame['frame.time_utc']}.\n"
+                        f"It is the {tcp["tcp.stream.pnum"]} packet in the TCP stream {tcp['tcp.stream']}.\n"
+                        f"The source IP and port is {ip['ip.src']}:{tcp['tcp.srcport']}, and the destination is {ip['ip.dst']}:{tcp['tcp.dstport']}.\n"
+                        f"The TCP payload is \"{tcp.get('tcp.payload')}\"\n" if tcp.get('tcp.payload') else ""
+                        f"The TCP segment data is \"{tcp.get('tcp.segment_data')}\"\n" if tcp.get('tcp.segment_data') else ""
+                        "\n"
+                    )
+                    outfile.write(description)
                 else:
-                    tcp_payload = tcp.get('tcp.payload')
-                    tcp_segment_data = tcp.get('tcp.segment_data')
-                    try:
-                        tcp_analysis_message = tcp.get('tcp.analysis', {}).get('tcp.analysis.flags', {}).get('_ws.expert', {}).get('_ws.expert.message')
-                    except:
-                        tcp_analysis_message = None
-                    try:
-                        if format == "markdown":
-                            payload_description = f"### TCP payload\n{tcp_payload}\n" if tcp_payload else ""
-                            segment_description = f"### TCP segment data\n{tcp_segment_data}\n" if tcp_segment_data else ""
-                            analysis_message = f"> Note: {tcp_analysis_message}\n" if tcp_analysis_message else ""
-                            tcp_info_header = "## TCP Information\n" if (tcp_payload or tcp_segment_data or tcp_analysis_message) else ""
-                            description = (
-                                f"# Frame {frame['frame.number']}\n"
-                                "## Capture time\n"
-                                f"{frame['frame.time_utc']}\n"
-                                "## Stream Information\n"
-                                f"### Stream Number: {tcp['tcp.stream']}\n"
-                                f"### Stream Packet Number: {tcp['tcp.stream.pnum']}\n"
-                                "## IP Information\n"
-                                f"### Source IP: {ip['ip.src']}\n"
-                                f"### Source Port: {tcp['tcp.srcport']}\n"
-                                f"### Destination IP: {ip['ip.dst']}\n"
-                                f"### Destination Port: {tcp['tcp.dstport']}\n"
-                                f"{tcp_info_header}"
-                                f"{payload_description}"
-                                f"{segment_description}"
-                                f"{analysis_message}"
-                                "\n"
-                            )
-                        elif format == "txt":
-                            payload_description = f"The TCP payload is \"{tcp_payload}\".\n" if tcp_payload else ""
-                            segment_description = f"The TCP segment data is \"{tcp_segment_data}\".\n" if tcp_segment_data else ""
-                            analysis_message = f"Note: {tcp_analysis_message}.\n" if tcp_analysis_message else ""
-                            description = (
-                                f"Frame {frame['frame.number']} was captured at {frame['frame.time_utc']}.\n"
-                                f"It is the {tcp["tcp.stream.pnum"]} packet in the TCP stream {tcp['tcp.stream']}.\n"
-                                f"The source IP and port is {ip['ip.src']}:{tcp['tcp.srcport']}, and the destination is {ip['ip.dst']}:{tcp['tcp.dstport']}.\n"
-                                f"{payload_description}"
-                                f"{segment_description}"
-                                f"{analysis_message}"
-                                "\n"
-                            )
-                        outfile.write(description)
-                    except:
-                        print(f"Error processing packet: {frame['frame.number']}")
+                    print("Unsupported format. Please use 'json', 'markdown', or 'txt'.")
 
 def split_by_stream(pcap_json: str, format: FORMAT):
     """
@@ -122,19 +117,23 @@ def split_by_stream(pcap_json: str, format: FORMAT):
             stream_number = tcp.get('tcp.stream')
             if stream_number not in grouped_packets:
                 grouped_packets[stream_number] = []
-            grouped_packets[stream_number].append({
+            packet_info = {
                 "frame.number": frame.get('frame.number'),
+                "frame.len": frame.get('frame.len'),
+                "tcp.stream.pnum": tcp.get('tcp.stream.pnum'),
                 "frame.time_utc": frame.get('frame.time_utc'),
-                "ip.version": ip.get('ip.version'),
                 "ip.src": ip.get('ip.src'),
                 "ip.dst": ip.get('ip.dst'),
                 "tcp.srcport": tcp.get('tcp.srcport'),
                 "tcp.dstport": tcp.get('tcp.dstport'),
-                "tcp.flags": tcp.get('tcp.flags'),
-                "tcp.analysis": tcp.get('tcp.analysis'),
-                "tcp.payload": tcp.get('tcp.payload'),
-                "tcp.segment_data": tcp.get('tcp.segment_data')
-            })
+            }
+            payload = tcp.get('tcp.payload')
+            segment_data = tcp.get('tcp.segment_data')
+            if payload:
+                packet_info["tcp.payload"] = payload
+            if segment_data:
+                packet_info["tcp.segment_data"] = segment_data
+            grouped_packets[stream_number].append(packet_info)
         
         # write to file
         dir = os.path.dirname(pcap_json)
@@ -154,33 +153,26 @@ def split_by_stream(pcap_json: str, format: FORMAT):
                     outfile.write(f"# TCP Stream {stream_number}\n\n")
                     for frame in frames:
                         outfile.write(f"## Frame {frame['frame.number']}\n")
+                        outfile.write(f"### Length\n{frame['frame.len']}\n")
+                        outfile.write(f"### Stream Packet Number\n{frame['tcp.stream.pnum']}\n")
                         outfile.write(f"### Capture time\n{frame['frame.time_utc']}\n")
-                        outfile.write(f"### IP Version:\n{frame['ip.version']}\n")
-                        outfile.write(f"### Source `IP:port`:\n{frame['ip.src']}:{frame['tcp.srcport']}\n")
-                        outfile.write(f"### Destination `IP:port`:\n{frame['ip.dst']}:{frame['tcp.dstport']}\n")
-                        if frame['tcp.payload']:
-                            outfile.write(f"### TCP Payload:\n{frame['tcp.payload']}\n")
-                        if frame['tcp.segment_data']:
-                            outfile.write(f"### TCP Segment Data:\n{frame['tcp.segment_data']}\n")
-                        if frame['tcp.analysis']:
-                            analysis_flags = frame['tcp.analysis'].get('tcp.analysis.flags', {})
-                            if analysis_flags:
-                                outfile.write(f"> Note: {analysis_flags.get('_ws.expert.message', 'No analysis flags')}\n")
+                        outfile.write(f"### Source IP and Port\n{frame['ip.src']}:{frame['tcp.srcport']}\n")
+                        outfile.write(f"### Destination IP and Port\n{frame['ip.dst']}:{frame['tcp.dstport']}\n")
+                        if frame.get('tcp.payload'):
+                            outfile.write(f"### TCP Payload\n{frame['tcp.payload']}\n")
+                        if frame.get('tcp.segment_data'):
+                            outfile.write(f"### TCP Segment Data\n{frame['tcp.segment_data']}\n")
                         outfile.write("\n")
                 elif format == "txt":
                     outfile.write(f"TCP Stream {stream_number}\n\n")
                     for frame in frames:
                         outfile.write(f"Frame {frame['frame.number']} was captured at {frame['frame.time_utc']}.\n")
-                        outfile.write(f"IP Version: {frame['ip.version']}\n")
+                        outfile.write(f"It is the {frame['tcp.stream.pnum']} packet in the TCP stream {stream_number}.\n")
                         outfile.write(f"Source IP and port: {frame['ip.src']}:{frame['tcp.srcport']}, Destination IP and port: {frame['ip.dst']}:{frame['tcp.dstport']}\n")
-                        if frame['tcp.payload']:
+                        if frame.get('tcp.payload'):
                             outfile.write(f"The TCP payload is \"{frame['tcp.payload']}\".\n")
-                        if frame['tcp.segment_data']:
+                        if frame.get('tcp.segment_data'):
                             outfile.write(f"The TCP segment data is \"{frame['tcp.segment_data']}\".\n")
-                        if frame['tcp.analysis']:
-                            analysis_flags = frame['tcp.analysis'].get('tcp.analysis.flags', {})
-                            if analysis_flags:
-                                outfile.write(f"Note: {analysis_flags.get('_ws.expert.message', 'No analysis flags')}\n")
                         outfile.write("\n")
 
 if __name__ == "__main__":
@@ -189,4 +181,7 @@ if __name__ == "__main__":
     split_by_stream(f"{PCAP_PATH}.json", "txt")
     split_by_stream(f"{PCAP_PATH}.json", "markdown")
     split_by_stream(f"{PCAP_PATH}.json", "json")
+    # split_by_packet(f"{PCAP_PATH}.json", "txt")
+    # split_by_packet(f"{PCAP_PATH}.json", "markdown")
+    # split_by_packet(f"{PCAP_PATH}.json", "json")
 
