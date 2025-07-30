@@ -178,7 +178,7 @@ class ChatWithPCAP:
         k_args = {"k": 3} if filter is None else {"k": 1, "filter": filter}
         retriever = self.vectordb.as_retriever(
             search_type="similarity",  # similarity / similarity_score_threshold / mmr
-            search_kwargs=k_args # Retrieve top k relevant documents, larger k may lead to better context but slower response
+            search_kwargs=k_args # Retrieve top k relevant documents, larger k may lead to larger context and slower response
         )
         history_aware_retriever = create_history_aware_retriever(
             self.llm_model, retriever, contextualize_q_prompt
